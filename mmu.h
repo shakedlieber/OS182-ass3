@@ -142,6 +142,18 @@ struct segdesc {
 #define PTE_PS          0x080   // Page Size
 #define PTE_MBZ         0x180   // Bits must be zero
 
+
+#define PTE_PG 0x200
+/**  turn on the appropriate flag, bitwise or**/
+#define PTE_PG_ON(pte)      ((uint)(pte) | PTE_PG)
+#define PTE_P_ON(pte)       ((uint)(pte) | PTE_P)
+#define PTE_A_ON(pte)       ((uint)(pte) | PTE_A)
+/**  turn off the appropriate flag, and on a false flag (everything is true, except the flag)**/
+#define PTE_PG_OFF(pte)     ((uint)(pte) & ~PTE_PG)
+#define PTE_P_OFF(pte)      ((uint)(pte) & ~PTE_P)
+#define PTE_A_OFF(pte)      ((uint)(pte) & ~PTE_A)
+
+
 // Address in page table or page directory entry
 #define PTE_ADDR(pte)   ((uint)(pte) & ~0xFFF)
 #define PTE_FLAGS(pte)  ((uint)(pte) &  0xFFF)

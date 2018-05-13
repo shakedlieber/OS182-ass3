@@ -194,5 +194,9 @@ void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
 
+char *          swapToFile(pde_t *pgdir);
+int             mappages_global(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+pde_t *         walkpgdir_global(pde_t *pgdir, void *va,int alloc);
+
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

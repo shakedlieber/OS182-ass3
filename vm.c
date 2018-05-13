@@ -231,6 +231,10 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 
   a = PGROUNDUP(oldsz);
   for(; a < newsz; a += PGSIZE){
+    if((proc->pid > DEFAULT_PROCESSES) &&( a >= PGSIZE * MAX_PSYC_PAGES)) {
+      /**  if the new page exceeded the max physical pages count , move some pages to swap file **/
+     swapToFile(pgdir);
+    }
     mem = kalloc();
     if(mem == 0){
       cprintf("allocuvm out of memory\n");
@@ -244,6 +248,25 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
       kfree(mem);
       return 0;
     }
+
+    /** TODO add page swapping algorithm macros **/
+    pte_t *pte;
+    if(proc->pid > DEFAULT_PROCESSES)
+    {
+      int pageIndex = 0;
+      while((pageIndex<MAX_TOTAL_PAGES) && (proc->pagesDS[pageIndex].isAllocated == 1))
+        pageIndex++;
+
+      proc->pagesDS[pageIndex].isAllocated = 1;
+      proc->pagesDS[pageIndex].v_address = a;
+      /**  the new page is inside the RAM and NOT in the swap file**/
+      proc->pagesDS[pageIndex].in_RAM = 1;
+      proc->pagesDS[pageIndex].file_offset = -1;
+      pte = walkpgdir(pgdir, (char *)a , 0);
+      *pte=PTE_P_ON(*pte);
+      *pte=PTE_PG_OFF(*pte);
+    }
+
   }
   return newsz;
 }
@@ -325,8 +348,11 @@ copyuvm(pde_t *pgdir, uint sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
-    if(!(*pte & PTE_P))
-      panic("copyuvm: page not present");
+    if(!(*pte & PTE_P)){
+      if(!(*pte & PTE_PG))
+        panic("copyuvm: page not present");
+      continue;
+    }
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -382,6 +408,57 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   }
   return 0;
 }
+
+
+char *
+swapToFile(pde_t *pgdir)
+{
+  pte_t *pte;
+  uint address = selectPage(); // TODO selectPage...
+  int bytesWrittenToFile = writeToSwapFile(proc, (char *) address, proc->fileOffset,PGSIZE);
+  int i = 0;
+  while(proc->pagesDS[i].v_address != address && i < MAX_TOTAL_PAGES)
+    i++;
+  /** putting the page in the file, overwriting previous file offset**/
+  proc->pagesDS[i].file_offset = proc->fileOffset;
+  /** page no longer in RAM moved to swap file**/
+  proc->pagesDS[i].in_RAM = 0;
+  proc->pagesDS[i].v_address = -1;
+  /** update the new file offset **/
+  proc->fileOffset = proc->fileOffset + bytesWrittenToFile;
+  proc->pagesInSwpFile++;
+  pte = walkpgdir(pgdir, (char *)address, 0);
+  *pte = PTE_P_OFF(*pte);
+  *pte = PTE_PG_ON(*pte);
+  uint pageAddress = PTE_ADDR(*pte);
+  char* v_address = p2v(pageAddress);
+  kfree(v_address);
+  lcr3(v2p(proc->pgdir));
+  return v_address;
+
+}
+
+uint
+selectPage()
+{
+  // TODO selectPage...
+  return -1;
+  // TODO selectPage...
+}
+
+/** create PTE - mappages **/
+int
+mappages_global(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+{
+  return mappages(pgdir,va,size,pa,perm);
+}
+/** return the address of PTE - walkpgdir **/
+pte_t *
+walkpgdir_global(pde_t *pgdir, void *va,int alloc)
+{
+  return walkpgdir(pgdir,va,alloc);
+}
+
 
 //PAGEBREAK!
 // Blank page.

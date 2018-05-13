@@ -7,6 +7,67 @@
 #include "x86.h"
 #include "elf.h"
 
+void
+initializePagesDataExec(struct page * backupDS, int * backupIndexes, int * queueBackup)
+{
+  int i;
+  for (i = 0; i < MAX_TOTAL_PAGES; ++i) {
+    /**  backup proc pagesDS before clean**/
+    backupDS[i].file_offset = proc->pagesDS[i].file_offset;
+    backupDS[i].in_RAM = proc->pagesDS[i].in_RAM;
+    backupDS[i].v_address = proc->pagesDS[i].v_address;
+    backupDS[i].isAllocated = proc->pagesDS[i].isAllocated;
+
+    /**  clean proc pagesDS before exec **/
+    proc->pagesDS[i].v_address = 0;
+    proc->pagesDS[i].file_offset = 0;
+    proc->pagesDS[i].in_RAM = 0;
+    proc->pagesDS[i].isAllocated = 0;
+  }
+
+  for (i = 0; i < MAX_PSYC_PAGES; ++i) {
+    /**  backup pages queue **/
+    queueBackup[i] = proc->inRAMQueue[i];
+    /**  clear pages queue **/
+    proc->inRAMQueue[i] = -1;
+  }
+
+  /**  backup proc page counters before clean **/
+  backupIndexes[0] = proc->numberOfPageFaults;
+  backupIndexes[1] = proc->fileOffset;
+  backupIndexes[2] = proc->pagesInSwpFile;
+
+  /**  clean proc page counters before exec **/
+  proc->numberOfPageFaults = 0;
+  proc->fileOffset = 0;
+  proc->pagesInSwpFile = 0;
+
+}
+
+void
+restoreFromBackup(struct page * backupDS, int * backupIndexes, int *queueBackup)
+{
+  int i;
+  for (i = 0; i < MAX_TOTAL_PAGES; ++i) {
+    /**  restore proc pagesDS after failed exec **/
+    proc->pagesDS[i].v_address = backupDS[i].v_address;
+    proc->pagesDS[i].file_offset = backupDS[i].file_offset;
+    proc->pagesDS[i].in_RAM = backupDS[i].in_RAM;
+    proc->pagesDS[i].isAllocated = backupDS[i].isAllocated;
+  }
+
+  for (i = 0 ; i < MAX_PSYC_PAGES; ++i) {
+    proc->inRAMQueue[i] = queueBackup[i];
+  }
+
+
+  /**  restore proc page counters after failed exec **/
+  proc->numberOfPageFaults = backupIndexes[0];
+  proc->fileOffset = backupIndexes[1];
+  proc->pagesInSwpFile = backupIndexes[2];
+
+}
+
 int
 exec(char *path, char **argv)
 {
@@ -28,6 +89,10 @@ exec(char *path, char **argv)
   }
   ilock(ip);
   pgdir = 0;
+
+  struct page backupPagesDS[MAX_TOTAL_PAGES];
+  int backupIndexes[3];
+  initializePagesDataExec(backupPagesDS, backupIndexes);
 
   // Check ELF header
   if(readi(ip, (char*)&elf, 0, sizeof(elf)) != sizeof(elf))
@@ -99,11 +164,23 @@ exec(char *path, char **argv)
   curproc->sz = sz;
   curproc->tf->eip = elf.entry;  // main
   curproc->tf->esp = sp;
+
+  /**  change to the new swap file**/
+  if(proc-> pid > DEFAULT_PROCESSES)
+  {
+    removeSwapFile(proc);
+    createSwapFile(proc);
+  }
+
   switchuvm(curproc);
   freevm(oldpgdir);
   return 0;
 
  bad:
+
+  /**  failed exec restore the pagesDS and all indexes and counters stored in backup **/
+  restoreFromBackup(backupPagesDS , backupIndexes);
+
   if(pgdir)
     freevm(pgdir);
   if(ip){

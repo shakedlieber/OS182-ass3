@@ -13,6 +13,8 @@ struct cpu {
 extern struct cpu cpus[NCPU];
 extern int ncpu;
 
+#define DEFAULT_PROCESSES 2
+
 //PAGEBREAK: 17
 // Saved registers for kernel context switches.
 // Don't need to save all the segment registers (%cs, etc),
@@ -34,6 +36,15 @@ struct context {
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+struct page{
+    uint v_address;     // virtual address
+    int file_offset;   // offset in swap file
+    uint in_RAM;        // acts as a boolean to test if the page in the memory currently
+    int isAllocated;
+    uint age;
+};
+
+
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -52,6 +63,18 @@ struct proc {
 
   //Swap file. must initiate with create swap file
   struct file *swapFile;      //page file
+
+  struct page pagesDS[MAX_TOTAL_PAGES];
+  uint fileOffset;                           // next place to write in the file
+
+  int numberOfAllocatedPages;                    // the total allocated pages
+  uint numberOfPagedOut;                          // number of pages in the swap file
+  int numberOfPageFaults;                        // the number of times a page fault has occurred
+  int totalNumberOfPagedOut;                    // the number of times a page was moved to swap file
+
+  int inRAMQueue[MAX_PSYC_PAGES];
+  int availableOffsetQueue[MAX_PSYC_PAGES];
+
 };
 
 // Process memory is laid out contiguously, low addresses first:

@@ -78,6 +78,50 @@ trap(struct trapframe *tf)
     lapiceoi();
     break;
 
+  case T_PGFLT:
+    cprintf("page fault pid %d\n",proc->pid);
+
+    proc->numberOfPageFaults++;
+    /**  the virtual address stored in %CR2 is stored in page **/
+    uint page = PGROUNDDOWN(rcr2());
+    int i;
+    int count = 0;
+    for(i=0;i<MAX_TOTAL_PAGES;i++)
+      if( ( proc->pagesDS[i].file_offset != -1 ) && ( proc->pagesDS[i].in_RAM ) )
+          count++;
+    if(count != MAX_PSYC_PAGES)
+      swapToFile(proc->pgdir);
+
+    char* newPageAddress = kalloc();
+    if(newPageAddress == 0){
+      /**  kalloc failed, didn't try to allocate more memory no need to dealloc **/
+      cprintf("kalloc failed in trap PGFLT case\n");
+      break;
+    }
+    memset(newPageAddress, 0, PGSIZE);
+    i=0;
+    while((i<MAX_TOTAL_PAGES)&&(proc->pagesDS[i].v_address != page))
+      i++;
+    uint offset = proc->pagesDS[i].file_offset;
+    /** populate the page starting at newPageAddress with the info from swap file **/
+    readFromSwapFile(proc, newPageAddress, offset, PGSIZE);
+    pte_t *pte = walkpgdir_global(proc->pgdir,(void *) page,  0);
+    mappages_global(proc->pgdir, (void *) page, PGSIZE, v2p(newPageAddress), PTE_W | PTE_U );
+
+    *pte = PTE_P_ON(*pte);
+    *pte = PTE_PG_OFF(*pte);
+
+    /**  we failed at acquiring the page, defenitly going to use it  **/
+    *pte = PTE_A_OFF(*pte);
+    proc->pagesDS[i].in_RAM = 1;
+    proc->pagesDS[i].file_offset = -1;
+    /**  REMOVED a page from the swap file, decrement the number of pages in the file ! **/
+    proc->pagesInSwpFile--;
+    
+    lapiceoi();
+    break; // PGFLT case break
+
+
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){

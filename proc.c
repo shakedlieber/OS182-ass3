@@ -112,6 +112,23 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  p->fileOffset = 0;
+  p->pagesInSwpFile = 0;
+  p->numberOfPageFaults = 0;
+  int i;
+  for (i = 0; i < MAX_TOTAL_PAGES; i++)
+  {
+    p->pagesDS[i].v_address = 0;
+    p->pagesDS[i].file_offset = 0;
+    p->pagesDS[i].in_RAM = 0;
+    p->pagesDS[i].isAllocated = 0;
+    p->pagesDS[i].age = 0;
+  }
+
+  for(i=0 ; i< MAX_PSYC_PAGES; i++) {
+    p->inRAMQueue[i] = -1;
+  }
+
   return p;
 }
 
@@ -212,6 +229,36 @@ fork(void)
 
   pid = np->pid;
 
+  if(pid > DEFAULT_PROCESSES)
+  {
+    /** only new processes need to create page swap (i.e excluding init and shell) **/
+    createSwapFile(np);
+    np->fileOffset = proc->fileOffset;
+    np->pagesInSwpFile = proc->pagesInSwpFile;
+    np->numberOfPageFaults = proc->numberOfPageFaults;
+    int i;
+    for (i = 0; i < MAX_TOTAL_PAGES; i++)
+    {
+      np->pagesDS[i].v_address = proc->pagesDS[i].v_address;
+      np->pagesDS[i].file_offset = proc->pagesDS[i].file_offset;
+      np->pagesDS[i].in_RAM = proc->pagesDS[i].in_RAM;
+      np->pagesDS[i].isAllocated = proc->pagesDS[i].isAllocated;
+      np->pagesDS[i].age = proc->pagesDS[i].age;
+    }
+    char* newPage = kalloc();
+    for(i=0; i< proc->pagesInSwpFile;i++)
+    {
+      readFromSwapFile(proc,newPage,i*PGSIZE,PGSIZE);
+      writeToSwapFile(np,newPage,i*PGSIZE,PGSIZE);
+    }
+
+    for(i=0 ; i< MAX_PSYC_PAGES; i++) {
+      np->inRAMQueue[i] = proc->inRAMQueue[i];
+    }
+
+    kfree(newPage);
+  }
+
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
@@ -246,6 +293,11 @@ exit(void)
   iput(curproc->cwd);
   end_op();
   curproc->cwd = 0;
+
+  /** TODO add MACRO for paging algorithms **/
+  /** TODO maybe we need to free pages ?  **/
+  removeSwapFile(proc);
+  /** TODO add MACRO for paging algorithms **/
 
   acquire(&ptable.lock);
 
