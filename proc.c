@@ -122,7 +122,11 @@ found:
     p->pagesDS[i].file_offset = 0;
     p->pagesDS[i].in_RAM = 0;
     p->pagesDS[i].isAllocated = 0;
+#if defined(LAPA)
+    p->pagesDS[i].age = 0xFFFFFFFF;
+#else
     p->pagesDS[i].age = 0;
+#endif
   }
 
   for(i=0 ; i< MAX_PSYC_PAGES; i++) {
@@ -229,6 +233,7 @@ fork(void)
 
   pid = np->pid;
 
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
   if(pid > DEFAULT_PROCESSES)
   {
     /** only new processes need to create page swap (i.e excluding init and shell) **/
@@ -258,6 +263,7 @@ fork(void)
 
     kfree(newPage);
   }
+#endif
 
   acquire(&ptable.lock);
 
@@ -294,10 +300,9 @@ exit(void)
   end_op();
   curproc->cwd = 0;
 
-  /** TODO add MACRO for paging algorithms **/
-  /** TODO maybe we need to free pages ?  **/
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
   removeSwapFile(proc);
-  /** TODO add MACRO for paging algorithms **/
+#endif
 
   acquire(&ptable.lock);
 
@@ -582,5 +587,148 @@ procdump(void)
         cprintf(" %p", pc[i]);
     }
     cprintf("\n");
+  }
+}
+
+
+void fixQueue(in index){
+    while(index < MAX_PSYC_PAGES - 1){
+        proc->inRAMQueue[index] = proc->inRAMQueue[index + 1];
+        index++;
+    }
+    proc->inRAMQueue[MAX_PSYC_PAGES] = -1
+}
+
+int removeSCFIFO(){
+  int index = -1;
+  int i;
+  int temp[MAX_PSYC_PAGES];
+
+  for (i = 0; i<MAX_PSYC_PAGES; i++)
+    temp[i] = -1;
+
+  int temp_index = 0;
+  for (i = 0; (i<MAX_PSYC_PAGES)&&(index == -1); i++){
+    uint temp_v_addr = proc->pagesDS[proc->inRAMQueue[i]].v_address;
+    pde_t* pte = walkpgdir_global(proc->pgdir, (char*) temp_v_addr, 0);
+    if(*pte & PTE_A){
+      *pte = PTE_A_OFF(*pte);
+      temp[temp_index] = proc->inRAMQueue[i];
+      temp_index++;
+    } else{
+      index = proc->inRAMQueue[i];
+    }
+  }
+  
+  if(index == -1){
+    index = proc->inRAMQueue[0];
+    if(index != -1)
+      fixQueue(0);
+    else
+      panic("error in removing scfifo!");
+    return index;
+  }
+
+  i++;
+  int new_index = 0;
+  while ((i < MAX_PSYC_PAGES) && (proc->inRAMQueue[i] != -1)){
+    proc->inRAMQueue[new_index] = proc->inRAMQueue[i];
+    i++;
+    new_index++;
+  }
+
+
+  i = 0;
+  while (new_index < MAX_PSYC_PAGES){
+    proc->inRAMQueue[new_index] = temp[i];
+    i++;
+    new_index++;
+  }
+
+  return index;
+}
+
+int removeNFUA(){
+  int i;
+  int min_index = 0;
+  for( i =1; i <MAX_PSYC_PAGES; i++){
+    if(proc->pagesDS[proc->inRAMQueue[i]].age < proc->pagesDS[proc->inRAMQueue[min_index]].age)
+      min_index = i;
+  }
+
+  i = min_index;
+  min_index = proc->inRAMQueue[min_index];
+  fixQueue(i);
+  return min_index;
+}
+
+int removeLAPA(){
+  int i;
+  int min_index = 0;
+  int min_age = 0xFFFFFFFF;
+  int min_count = 33;
+  for(i = 0; i < MAX_PSYC_PAGES; i++){
+    int curr_age = proc->pagesDS[proc->inRAMQueue[i]].age;
+    int curr_count = 0;
+    for (int j = 0; j<32; j++){
+      curr_count += (1 << j) & curr_age;
+    }
+    if (curr_count < min_count){
+      min_index = i;
+      min_age = curr_age;
+      min_count = curr_count;
+    }
+    else if (curr_count == min_count && curr_age < min_age) {
+      min_index = i;
+      min_age = curr_age;
+    }
+  }
+
+  i = min_index;
+  min_index = proc->inRAMQueue[min_index];
+  fixQueue(i);
+  return min_index;
+}
+
+int removeAQ(){
+  return fixQueue(0);
+}
+
+void insert(int index){
+  int i = 0;
+  while (proc->inRAMQueue[i] != -1){
+    if (i == MAX_PSYC_PAGES)
+      panic("error in inerstion!");
+    i++;
+  }
+
+  proc->inRAMQueue[i] = index;
+}
+
+void agePages(void){
+  int i;
+  for(i = 0; i < MAX_TOTAL_PAGES; i++){
+    if(proc->pagesDS[i].in_RAM == 1){
+      proc->pagesDS[i].age = proc->pagesDS[i].age >> 1;
+      pte_t* pte = walkpgdir_global(proc->pgdir, (void*)proc->pagesDS[i].v_address, 0);
+      if(*pte & PTE_A)
+        proc->pagesDS[i].age = proc->pagesDS[i].age | 0x80000000;
+    } 
+  }
+}
+
+void advanceQueue(void){
+  int i;
+  for(i = MAX_TOTAL_PAGES-1; i < 0 ; i--){
+      if (proc->pagesDS[i] == -1)
+        continue;
+      curr_page_idx = proc->inRAMQueue[i];
+      prev_page_idx = proc->inRAMQueue[i-1];
+      pte_t* pte_curr = walkpgdir_global(proc->pgdir, (void*)proc->pagesDS[curr_page_idx].v_address, 0);
+      pte_t* pte_pre = walkpgdir_global(proc->pgdir, (void*)proc->pagesDS[prev_page_idx].v_address, 0);
+      if((*pte_pre & PTE_A != 0) && (*pte_curr & PTE_A == 0)){
+        proc->inRAMQueue[i] = prev_page_idx;
+        proc->inRAMQueue[i-1] = curr_page_idx;
+      }
   }
 }

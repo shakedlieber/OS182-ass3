@@ -231,10 +231,13 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 
   a = PGROUNDUP(oldsz);
   for(; a < newsz; a += PGSIZE){
-    if((proc->pid > DEFAULT_PROCESSES) &&( a >= PGSIZE * MAX_PSYC_PAGES)) {
-      /**  if the new page exceeded the max physical pages count , move some pages to swap file **/
-     swapToFile(pgdir);
+
+#if (defined(SCFIFO) || defined(NFUA) || defined(LAPA) || defined(AQ))
+    if((proc->pid > DEFAULT_PROCESSES) && ( a >= PGSIZE * MAX_PSYC_PAGES)) {
+      swapToFile(pgdir);
     }
+#endif
+
     mem = kalloc();
     if(mem == 0){
       cprintf("allocuvm out of memory\n");
@@ -249,7 +252,7 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
       return 0;
     }
 
-    /** TODO add page swapping algorithm macros **/
+#if (defined(SCFIFO) || defined(NFUA) || defined(LAPA) || defined(AQ))
     pte_t *pte;
     if(proc->pid > DEFAULT_PROCESSES)
     {
@@ -262,11 +265,14 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
       /**  the new page is inside the RAM and NOT in the swap file**/
       proc->pagesDS[pageIndex].in_RAM = 1;
       proc->pagesDS[pageIndex].file_offset = -1;
+
+      insert(pageIndex);
+
       pte = walkpgdir(pgdir, (char *)a , 0);
       *pte=PTE_P_ON(*pte);
       *pte=PTE_PG_OFF(*pte);
     }
-
+#endif
   }
   return newsz;
 }
@@ -441,9 +447,22 @@ swapToFile(pde_t *pgdir)
 uint
 selectPage()
 {
-  // TODO selectPage...
-  return -1;
-  // TODO selectPage...
+  int index = 0;
+
+#if defined(SCFIFO)
+  index = removeSCFIFO();
+#endif
+#if defined(NFUA)
+  index = removeNFUA();
+#endif
+#if defined(LAPA)
+  index = removeLAPA();
+#endif
+#if defined(AQ)
+  index = removeAQ();
+#endif  
+
+  return proc->pagesDS[index].v_address;
 }
 
 /** create PTE - mappages **/

@@ -124,6 +124,13 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int   			removeSCFIFO(void);
+int   			removeNFUA(void);
+int   			removeLAPA(void);
+int   			removeAQ(void);
+void			insert(int);
+void			agePages(void);
+void 			advanceQueue(void);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

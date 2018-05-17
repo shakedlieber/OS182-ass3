@@ -90,9 +90,13 @@ exec(char *path, char **argv)
   ilock(ip);
   pgdir = 0;
 
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
+
   struct page backupPagesDS[MAX_TOTAL_PAGES];
   int backupIndexes[3];
-  initializePagesDataExec(backupPagesDS, backupIndexes);
+  int queueBackup[MAX_PSYC_PAGES];
+  initializePagesDataExec(backupPagesDS, backupIndexes, queueBackup);
+#endif
 
   // Check ELF header
   if(readi(ip, (char*)&elf, 0, sizeof(elf)) != sizeof(elf))
@@ -165,12 +169,15 @@ exec(char *path, char **argv)
   curproc->tf->eip = elf.entry;  // main
   curproc->tf->esp = sp;
 
+
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
   /**  change to the new swap file**/
   if(proc-> pid > DEFAULT_PROCESSES)
   {
     removeSwapFile(proc);
     createSwapFile(proc);
   }
+#endif
 
   switchuvm(curproc);
   freevm(oldpgdir);
@@ -178,9 +185,11 @@ exec(char *path, char **argv)
 
  bad:
 
-  /**  failed exec restore the pagesDS and all indexes and counters stored in backup **/
-  restoreFromBackup(backupPagesDS , backupIndexes);
 
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
+  /**  failed exec restore the pagesDS and all indexes and counters stored in backup **/
+  restoreFromBackup(backupPagesDS , backupIndexes, queueBackup);
+#endif
   if(pgdir)
     freevm(pgdir);
   if(ip){
