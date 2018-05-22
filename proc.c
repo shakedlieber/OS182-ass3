@@ -131,7 +131,7 @@ found:
 #if defined(LAPA)
     p->pagesDS[i].age = 0xFFFFFFFF;
 #else
-    p->pagesDS[i].age = 0x00;
+    p->pagesDS[i].age = 0x00000000;
 #endif
   }
 
@@ -424,6 +424,12 @@ scheduler(void)
       swtch(&(c->scheduler), p->context);
       switchkvm();
 
+#if (defined(NFUA) || defined(LAPA))
+      agePages();
+#elif (defined(AQ))
+      advanceQueue();
+#endif
+
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
@@ -695,30 +701,36 @@ int removeNFUA(){
 int removeLAPA(){
   struct proc *curproc = myproc();
   int i;
-  int min_index = 0;
+  int min_i = -1;
   int min_age = 0xFFFFFFFF;
-  int min_count = 33;
+  int min_count = 33; // sum of all bits = 32
   for(i = 0; i < MAX_PSYC_PAGES; i++) {
     int curr_age = curproc->pagesDS[curproc->inRAMQueue[i]].age;
     int curr_count = 0;
     for (int j = 0; j<32; j++) {
-      curr_count += (1 << j) & curr_age;
+      if ((1 << j) & curr_age)
+        curr_count++;
     }
+    // cprintf("%x -> %d\n", curr_age, curr_count);
     if (curr_count < min_count) {
-      min_index = i;
+      min_i = i;
       min_age = curr_age;
       min_count = curr_count;
     }
     else if (curr_count == min_count && curr_age < min_age) {
-      min_index = i;
+      min_i = i;
       min_age = curr_age;
     }
   }
 
-  i = min_index;
-  min_index = curproc->inRAMQueue[min_index];
-  fixQueue(i);
-  return min_index;
+  if (min_i == -1)
+    panic("LAPA error");
+
+  // cprintf("idx: %d, age: %x, count: %d\n", min_i, min_age, min_count);
+
+  int index = curproc->inRAMQueue[min_i];
+  fixQueue(min_i);
+  return index;
 }
 
 int removeAQ(){
@@ -743,6 +755,7 @@ void insert(int index){
 void agePages(void){
   struct proc *curproc = myproc();
   int i;
+
   for(i = 0; i < MAX_TOTAL_PAGES; i++) {
     if(curproc->pagesDS[i].isAllocated == 1) {
       curproc->pagesDS[i].age = curproc->pagesDS[i].age >> 1;
@@ -827,7 +840,11 @@ void deallocatePage(uint va) {
     if ((curproc->pagesDS[i].isAllocated != 0) && (curproc->pagesDS[i].v_address ==  va)) {
 
       curproc->pagesDS[i].v_address = 0;
-      curproc->pagesDS[i].age = 0;
+#if defined(LAPA)
+      curproc->pagesDS[i].age = 0xFFFFFFFF;
+#else
+      curproc->pagesDS[i].age = 0x00000000;
+#endif
       curproc->pagesDS[i].isAllocated = 0;
 
       /** If the proc to remove is in the swap file, remember the possible offset **/
