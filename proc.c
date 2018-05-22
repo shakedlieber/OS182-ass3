@@ -20,6 +20,9 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+int initial_size;
+
+
 void
 pinit(void)
 {
@@ -113,24 +116,28 @@ found:
   p->context->eip = (uint)forkret;
 
   p->fileOffset = 0;
-  p->pagesInSwpFile = 0;
+  p->numberOfPagedOut = 0;
   p->numberOfPageFaults = 0;
+  p->totalNumberOfPagedOut = 0;
+  p->numberOfAllocatedPages = 0;
+
   int i;
   for (i = 0; i < MAX_TOTAL_PAGES; i++)
   {
     p->pagesDS[i].v_address = 0;
-    p->pagesDS[i].file_offset = 0;
+    p->pagesDS[i].file_offset = -1;
     p->pagesDS[i].in_RAM = 0;
     p->pagesDS[i].isAllocated = 0;
 #if defined(LAPA)
     p->pagesDS[i].age = 0xFFFFFFFF;
 #else
-    p->pagesDS[i].age = 0;
+    p->pagesDS[i].age = 0x00;
 #endif
   }
 
   for(i=0 ; i< MAX_PSYC_PAGES; i++) {
     p->inRAMQueue[i] = -1;
+    p->availableOffsetQueue[i] = -1;
   }
 
   return p;
@@ -141,6 +148,8 @@ found:
 void
 userinit(void)
 {
+  initial_size = getCurrentCapacity();
+
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
@@ -187,7 +196,9 @@ growproc(int n)
     if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
   } else if(n < 0){
-    if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
+    curproc->numberOfAllocatedPages +=(PGROUNDUP(n)/PGSIZE);
+    int flag = 1;
+    if((sz = deallocuvm(curproc->pgdir, sz, sz + n, flag)) == 0)
       return -1;
   }
   curproc->sz = sz;
@@ -238,27 +249,31 @@ fork(void)
   {
     /** only new processes need to create page swap (i.e excluding init and shell) **/
     createSwapFile(np);
-    np->fileOffset = proc->fileOffset;
-    np->pagesInSwpFile = proc->pagesInSwpFile;
-    np->numberOfPageFaults = proc->numberOfPageFaults;
+    np->fileOffset = curproc->fileOffset;
+    np->numberOfPagedOut = curproc->numberOfPagedOut;
+    np->numberOfAllocatedPages = curproc->numberOfAllocatedPages;
+    np->numberOfPageFaults = 0;
+    np->totalNumberOfPagedOut = 0;
+
     int i;
     for (i = 0; i < MAX_TOTAL_PAGES; i++)
     {
-      np->pagesDS[i].v_address = proc->pagesDS[i].v_address;
-      np->pagesDS[i].file_offset = proc->pagesDS[i].file_offset;
-      np->pagesDS[i].in_RAM = proc->pagesDS[i].in_RAM;
-      np->pagesDS[i].isAllocated = proc->pagesDS[i].isAllocated;
-      np->pagesDS[i].age = proc->pagesDS[i].age;
+      np->pagesDS[i].v_address = curproc->pagesDS[i].v_address;
+      np->pagesDS[i].file_offset = curproc->pagesDS[i].file_offset;
+      np->pagesDS[i].in_RAM = curproc->pagesDS[i].in_RAM;
+      np->pagesDS[i].isAllocated = curproc->pagesDS[i].isAllocated;
+      np->pagesDS[i].age = curproc->pagesDS[i].age;
     }
     char* newPage = kalloc();
-    for(i=0; i< proc->pagesInSwpFile;i++)
+    for(i=0; i< curproc->numberOfPagedOut;i++)
     {
-      readFromSwapFile(proc,newPage,i*PGSIZE,PGSIZE);
+      readFromSwapFile(curproc,newPage,i*PGSIZE,PGSIZE);
       writeToSwapFile(np,newPage,i*PGSIZE,PGSIZE);
     }
 
     for(i=0 ; i< MAX_PSYC_PAGES; i++) {
-      np->inRAMQueue[i] = proc->inRAMQueue[i];
+      np->inRAMQueue[i] = curproc->inRAMQueue[i];
+      np->availableOffsetQueue[i] = curproc->availableOffsetQueue[i];
     }
 
     kfree(newPage);
@@ -301,7 +316,7 @@ exit(void)
   curproc->cwd = 0;
 
 #if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
-  removeSwapFile(proc);
+  removeSwapFile(curproc);
 #endif
 
   acquire(&ptable.lock);
@@ -320,6 +335,12 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
+#if (defined(VERBOSE_PRINT_TRUE))
+cprintf("%d state=ZOMBIE alloc-memory-pages=%d paged-out=%d page-faults=%d  paged-out-total-num=%d %s\n",
+              curproc->pid,curproc->numberOfAllocatedPages,curproc->numberOfPagedOut,
+              curproc->numberOfPageFaults,curproc->totalNumberOfPagedOut, curproc->name);
+#endif
+
   sched();
   panic("zombie exit");
 }
@@ -568,10 +589,10 @@ procdump(void)
   [RUNNING]   "run   ",
   [ZOMBIE]    "zombie"
   };
-  int i;
+  // int i;
   struct proc *p;
   char *state;
-  uint pc[10];
+  // uint pc[10];
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->state == UNUSED)
@@ -580,26 +601,32 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("%d %s %s", p->pid, state, p->name);
-    if(p->state == SLEEPING){
-      getcallerpcs((uint*)p->context->ebp+2, pc);
-      for(i=0; i<10 && pc[i] != 0; i++)
-        cprintf(" %p", pc[i]);
-    }
+    cprintf("%d state=%s alloc-memory-pages=%d paged-out=%d page-faults=%d  paged-out-total-num=%d %s", p->pid, state,p->numberOfAllocatedPages,p->numberOfPagedOut,
+            p->numberOfPageFaults,p->totalNumberOfPagedOut, p->name);
+    // cprintf("%d %s %s", p->pid, state, p->name);
+    // if(p->state == SLEEPING){
+    //   getcallerpcs((uint*)p->context->ebp+2, pc);
+    //   for(i=0; i<10 && pc[i] != 0; i++)
+    //     cprintf(" %p", pc[i]);
+    // }
     cprintf("\n");
   }
+  int currentFree = getCurrentCapacity();
+  cprintf("%d % free pages in the system\n",((currentFree*100)/initial_size));
 }
 
 
-void fixQueue(in index){
-    while(index < MAX_PSYC_PAGES - 1){
-        proc->inRAMQueue[index] = proc->inRAMQueue[index + 1];
-        index++;
-    }
-    proc->inRAMQueue[MAX_PSYC_PAGES] = -1
+void fixQueue(int index){
+  struct proc *curproc = myproc();
+  while(index < MAX_PSYC_PAGES - 1) {
+    curproc->inRAMQueue[index] = curproc->inRAMQueue[index + 1];
+    index++;
+  }
+  curproc->inRAMQueue[MAX_PSYC_PAGES-1] = -1;
 }
 
 int removeSCFIFO(){
+  struct proc *curproc = myproc();
   int index = -1;
   int i;
   int temp[MAX_PSYC_PAGES];
@@ -608,22 +635,24 @@ int removeSCFIFO(){
     temp[i] = -1;
 
   int temp_index = 0;
-  for (i = 0; (i<MAX_PSYC_PAGES)&&(index == -1); i++){
-    uint temp_v_addr = proc->pagesDS[proc->inRAMQueue[i]].v_address;
-    pde_t* pte = walkpgdir_global(proc->pgdir, (char*) temp_v_addr, 0);
+  for (i = 0; (i<MAX_PSYC_PAGES)&&(index == -1); i++) {
+    uint temp_v_addr = curproc->pagesDS[curproc->inRAMQueue[i]].v_address;
+    pde_t* pte = walkpgdir_global(curproc->pgdir, (char*) temp_v_addr, 0);
     if(*pte & PTE_A){
       *pte = PTE_A_OFF(*pte);
-      temp[temp_index] = proc->inRAMQueue[i];
+      temp[temp_index] = curproc->inRAMQueue[i];
       temp_index++;
     } else{
-      index = proc->inRAMQueue[i];
+      index = curproc->inRAMQueue[i];
+      break;
     }
   }
-  
+  // cprintf("\nscfifo queue index found: %d\n", i);
   if(index == -1){
-    index = proc->inRAMQueue[0];
-    if(index != -1)
+    index = curproc->inRAMQueue[0];
+    if(index != -1){
       fixQueue(0);
+    }
     else
       panic("error in removing scfifo!");
     return index;
@@ -631,16 +660,16 @@ int removeSCFIFO(){
 
   i++;
   int new_index = 0;
-  while ((i < MAX_PSYC_PAGES) && (proc->inRAMQueue[i] != -1)){
-    proc->inRAMQueue[new_index] = proc->inRAMQueue[i];
+  while ((i < MAX_PSYC_PAGES) && (curproc->inRAMQueue[i] != -1)) {
+    curproc->inRAMQueue[new_index] = curproc->inRAMQueue[i];
     i++;
     new_index++;
   }
 
 
   i = 0;
-  while (new_index < MAX_PSYC_PAGES){
-    proc->inRAMQueue[new_index] = temp[i];
+  while (new_index < MAX_PSYC_PAGES) {
+    curproc->inRAMQueue[new_index] = temp[i];
     i++;
     new_index++;
   }
@@ -649,31 +678,33 @@ int removeSCFIFO(){
 }
 
 int removeNFUA(){
+  struct proc *curproc = myproc();
   int i;
   int min_index = 0;
-  for( i =1; i <MAX_PSYC_PAGES; i++){
-    if(proc->pagesDS[proc->inRAMQueue[i]].age < proc->pagesDS[proc->inRAMQueue[min_index]].age)
+  for( i =1; i <MAX_PSYC_PAGES; i++) {
+    if(curproc->pagesDS[curproc->inRAMQueue[i]].age < curproc->pagesDS[curproc->inRAMQueue[min_index]].age)
       min_index = i;
   }
 
   i = min_index;
-  min_index = proc->inRAMQueue[min_index];
+  min_index = curproc->inRAMQueue[min_index];
   fixQueue(i);
   return min_index;
 }
 
 int removeLAPA(){
+  struct proc *curproc = myproc();
   int i;
   int min_index = 0;
   int min_age = 0xFFFFFFFF;
   int min_count = 33;
-  for(i = 0; i < MAX_PSYC_PAGES; i++){
-    int curr_age = proc->pagesDS[proc->inRAMQueue[i]].age;
+  for(i = 0; i < MAX_PSYC_PAGES; i++) {
+    int curr_age = curproc->pagesDS[curproc->inRAMQueue[i]].age;
     int curr_count = 0;
-    for (int j = 0; j<32; j++){
+    for (int j = 0; j<32; j++) {
       curr_count += (1 << j) & curr_age;
     }
-    if (curr_count < min_count){
+    if (curr_count < min_count) {
       min_index = i;
       min_age = curr_age;
       min_count = curr_count;
@@ -685,50 +716,142 @@ int removeLAPA(){
   }
 
   i = min_index;
-  min_index = proc->inRAMQueue[min_index];
+  min_index = curproc->inRAMQueue[min_index];
   fixQueue(i);
   return min_index;
 }
 
 int removeAQ(){
-  return fixQueue(0);
+  struct proc *curproc = myproc();
+  int index = curproc->inRAMQueue[0];
+  fixQueue(0);
+  return index;
 }
 
 void insert(int index){
+  struct proc *curproc = myproc();
   int i = 0;
-  while (proc->inRAMQueue[i] != -1){
+  while (curproc->inRAMQueue[i] != -1) {
     if (i == MAX_PSYC_PAGES)
       panic("error in inerstion!");
     i++;
   }
-
-  proc->inRAMQueue[i] = index;
+  // cprintf("\n%d <- %d\n", i, index);
+  curproc->inRAMQueue[i] = index;
 }
 
 void agePages(void){
+  struct proc *curproc = myproc();
   int i;
-  for(i = 0; i < MAX_TOTAL_PAGES; i++){
-    if(proc->pagesDS[i].in_RAM == 1){
-      proc->pagesDS[i].age = proc->pagesDS[i].age >> 1;
-      pte_t* pte = walkpgdir_global(proc->pgdir, (void*)proc->pagesDS[i].v_address, 0);
-      if(*pte & PTE_A)
-        proc->pagesDS[i].age = proc->pagesDS[i].age | 0x80000000;
+  for(i = 0; i < MAX_TOTAL_PAGES; i++) {
+    if(curproc->pagesDS[i].isAllocated == 1) {
+      curproc->pagesDS[i].age = curproc->pagesDS[i].age >> 1;
+      pte_t* pte = walkpgdir_global(curproc->pgdir, (void*)curproc->pagesDS[i].v_address, 0);
+      if(*pte & PTE_A) {
+        curproc->pagesDS[i].age = curproc->pagesDS[i].age | 0x80000000;
+        *pte = PTE_A_OFF(*pte);
+      }
     } 
   }
 }
 
 void advanceQueue(void){
+  struct proc *curproc = myproc();
   int i;
-  for(i = MAX_TOTAL_PAGES-1; i < 0 ; i--){
-      if (proc->pagesDS[i] == -1)
-        continue;
-      curr_page_idx = proc->inRAMQueue[i];
-      prev_page_idx = proc->inRAMQueue[i-1];
-      pte_t* pte_curr = walkpgdir_global(proc->pgdir, (void*)proc->pagesDS[curr_page_idx].v_address, 0);
-      pte_t* pte_pre = walkpgdir_global(proc->pgdir, (void*)proc->pagesDS[prev_page_idx].v_address, 0);
-      if((*pte_pre & PTE_A != 0) && (*pte_curr & PTE_A == 0)){
-        proc->inRAMQueue[i] = prev_page_idx;
-        proc->inRAMQueue[i-1] = curr_page_idx;
-      }
+  for(i = MAX_PSYC_PAGES-1; i < 0 ; i--) {
+    if (curproc->inRAMQueue[i] == -1)
+      continue;
+    int curr_page_idx = curproc->inRAMQueue[i];
+    int prev_page_idx = curproc->inRAMQueue[i-1];
+    pte_t* pte_curr = walkpgdir_global(curproc->pgdir, (void*)curproc->pagesDS[curr_page_idx].v_address, 0);
+    pte_t* pte_pre = walkpgdir_global(curproc->pgdir, (void*)curproc->pagesDS[prev_page_idx].v_address, 0);
+    if(((*pte_pre & PTE_A) != 0) && ((*pte_curr & PTE_A) == 0)){
+      curproc->inRAMQueue[i] = prev_page_idx;
+      curproc->inRAMQueue[i-1] = curr_page_idx;
+    }
+  }
+}
+
+void fixOffsetQueue() {
+  struct proc *curproc = myproc();
+  int index = 0;
+  while (index < MAX_PSYC_PAGES - 1) {
+    curproc->availableOffsetQueue[index] = curproc->availableOffsetQueue[index + 1];
+    index++;
+  }
+  curproc->availableOffsetQueue[MAX_PSYC_PAGES -1 ] = -1;
+}
+
+int removeOffsetQueue(void) {
+  struct proc* curproc = myproc();
+
+  int index = curproc->availableOffsetQueue[0];
+
+  if (index != -1)
+    fixOffsetQueue();
+
+  return index;
+}
+
+void insertOffsetQueue(int index) {
+  struct proc* curproc = myproc();
+
+  int i = 0;
+  while (curproc->availableOffsetQueue[i] != -1) {
+    if (i == MAX_PSYC_PAGES)
+      panic("overflow  in offset insert !");
+    i++;
+  }
+  curproc->availableOffsetQueue[i] = index;
+
+}
+
+int getFreeFileOffset(void) {
+  struct proc* curproc = myproc();
+  int result = removeOffsetQueue();
+  if (result == -1) {
+    result = curproc->fileOffset;
+    curproc->fileOffset = curproc->fileOffset + PGSIZE;
+  }
+
+  return result;
+}
+
+void deallocatePage(uint va) {
+  struct proc* curproc = myproc();
+
+  int i = 0;
+  int idx;
+  while (i < MAX_TOTAL_PAGES) {
+   // cprintf("WE ARE COMPARING : %p with %p \n", (char*) proc->pagesDS[i].v_address, va);
+    if ((curproc->pagesDS[i].isAllocated != 0) && (curproc->pagesDS[i].v_address ==  va)) {
+
+      curproc->pagesDS[i].v_address = 0;
+      curproc->pagesDS[i].age = 0;
+      curproc->pagesDS[i].isAllocated = 0;
+
+      /** If the proc to remove is in the swap file, remember the possible offset **/
+      if(curproc->pagesDS[i].in_RAM == 0)
+        insertOffsetQueue(curproc->pagesDS[i].file_offset);
+
+      curproc->pagesDS[i].in_RAM = 0;
+      curproc->pagesDS[i].file_offset = -1;
+      break;
+
+    }
+    i++;
+  }
+
+  if (i == MAX_TOTAL_PAGES)
+    panic("trying to deallocate a non existing page ");
+
+  idx = i;
+  i = 0;
+  while (i < MAX_PSYC_PAGES) {
+    if (curproc->inRAMQueue[i] == idx) {
+      fixQueue(i);
+      break;
+    }
+    i++;
   }
 }

@@ -147,6 +147,10 @@ main(void)
   static char buf[100];
   int fd;
 
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
+  printf(1, "\nhi\n");
+#endif
+
   // Ensure that three file descriptors are open.
   while((fd = open("console", O_RDWR)) >= 0){
     if(fd >= 3){

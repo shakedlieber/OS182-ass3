@@ -36,15 +36,17 @@ idtinit(void)
 void
 trap(struct trapframe *tf)
 {
+  struct proc *curproc = myproc();
   if(tf->trapno == T_SYSCALL){
-    if(myproc()->killed)
+    if(curproc->killed)
       exit();
-    myproc()->tf = tf;
+    curproc->tf = tf;
     syscall();
-    if(myproc()->killed)
+    if(curproc->killed)
       exit();
     return;
   }
+
 
   switch(tf->trapno){
   case T_IRQ0 + IRQ_TIMER:
@@ -77,20 +79,22 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
-
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
   case T_PGFLT:
-    cprintf("page fault pid %d\n",proc->pid);
+    // cprintf("page fault pid %d\n",curproc->pid);
 
-    proc->numberOfPageFaults++;
+    curproc->numberOfPageFaults++;
     /**  the virtual address stored in %CR2 is stored in page **/
-    uint page = PGROUNDDOWN(rcr2());
+    uint va = rcr2();
+    uint page = PGROUNDDOWN(va);
+
     int i;
     int count = 0;
     for(i=0;i<MAX_TOTAL_PAGES;i++)
-      if( ( proc->pagesDS[i].file_offset != -1 ) && ( proc->pagesDS[i].in_RAM ) )
+      if( ( curproc->pagesDS[i].isAllocated == 1 ) && ( curproc->pagesDS[i].in_RAM ) )
           count++;
-    if(count != MAX_PSYC_PAGES)
-      swapToFile(proc->pgdir);
+    if(count == MAX_PSYC_PAGES)
+      swapToFile(curproc->pgdir);
 
     char* newPageAddress = kalloc();
     if(newPageAddress == 0){
@@ -100,27 +104,34 @@ trap(struct trapframe *tf)
     }
     memset(newPageAddress, 0, PGSIZE);
     i=0;
-    while((i<MAX_TOTAL_PAGES)&&(proc->pagesDS[i].v_address != page))
+    while((i<MAX_TOTAL_PAGES)&&(curproc->pagesDS[i].v_address != page))
       i++;
-    uint offset = proc->pagesDS[i].file_offset;
+    
+    if(i==MAX_TOTAL_PAGES)
+      panic("can't find appropriate page");
+    
+    uint offset = curproc->pagesDS[i].file_offset;
     /** populate the page starting at newPageAddress with the info from swap file **/
-    readFromSwapFile(proc, newPageAddress, offset, PGSIZE);
-    pte_t *pte = walkpgdir_global(proc->pgdir,(void *) page,  0);
-    mappages_global(proc->pgdir, (void *) page, PGSIZE, v2p(newPageAddress), PTE_W | PTE_U );
+    readFromSwapFile(curproc, newPageAddress, offset, PGSIZE);
+    pte_t *pte = walkpgdir_global(curproc->pgdir,(char *) va,  0);
+    *pte = PTE_P_OFF(*pte);
+    *pte = PTE_PG_ON(*pte);
+    mappages_global(curproc->pgdir, (void *) page, PGSIZE, V2P(newPageAddress), PTE_W | PTE_U );
 
     *pte = PTE_P_ON(*pte);
     *pte = PTE_PG_OFF(*pte);
 
-    /**  we failed at acquiring the page, defenitly going to use it  **/
-    *pte = PTE_A_OFF(*pte);
-    proc->pagesDS[i].in_RAM = 1;
-    proc->pagesDS[i].file_offset = -1;
+    curproc->pagesDS[i].in_RAM = 1;
+    insertOffsetQueue(curproc->pagesDS[i].file_offset);
+    curproc->pagesDS[i].file_offset = -1;
+    
+    insert(i);
     /**  REMOVED a page from the swap file, decrement the number of pages in the file ! **/
-    proc->pagesInSwpFile--;
+    curproc->numberOfPagedOut--;
     
     lapiceoi();
     break; // PGFLT case break
-
+#endif
 
   //PAGEBREAK: 13
   default:
@@ -151,7 +162,7 @@ trap(struct trapframe *tf)
 
 #if (defined(NFUA) || defined(LAPA))
     agePages();
-#else if (defined(AQ))
+#elif (defined(AQ))
     advanceQueue();
 #endif
 

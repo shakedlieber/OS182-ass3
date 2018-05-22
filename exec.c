@@ -8,63 +8,76 @@
 #include "elf.h"
 
 void
-initializePagesDataExec(struct page * backupDS, int * backupIndexes, int * queueBackup)
+initializePagesDataExec(struct page * backupDS, int * backupIndexes, int * queueBackup, int * offsetQueueBackup)
 {
+  struct proc *curproc = myproc();
   int i;
   for (i = 0; i < MAX_TOTAL_PAGES; ++i) {
     /**  backup proc pagesDS before clean**/
-    backupDS[i].file_offset = proc->pagesDS[i].file_offset;
-    backupDS[i].in_RAM = proc->pagesDS[i].in_RAM;
-    backupDS[i].v_address = proc->pagesDS[i].v_address;
-    backupDS[i].isAllocated = proc->pagesDS[i].isAllocated;
+    backupDS[i].file_offset = curproc->pagesDS[i].file_offset;
+    backupDS[i].in_RAM = curproc->pagesDS[i].in_RAM;
+    backupDS[i].v_address = curproc->pagesDS[i].v_address;
+    backupDS[i].isAllocated = curproc->pagesDS[i].isAllocated;
 
     /**  clean proc pagesDS before exec **/
-    proc->pagesDS[i].v_address = 0;
-    proc->pagesDS[i].file_offset = 0;
-    proc->pagesDS[i].in_RAM = 0;
-    proc->pagesDS[i].isAllocated = 0;
+    curproc->pagesDS[i].v_address = 0;
+    curproc->pagesDS[i].file_offset = -1;
+    curproc->pagesDS[i].in_RAM = 0;
+    curproc->pagesDS[i].isAllocated = 0;
   }
 
   for (i = 0; i < MAX_PSYC_PAGES; ++i) {
     /**  backup pages queue **/
-    queueBackup[i] = proc->inRAMQueue[i];
+    queueBackup[i] = curproc->inRAMQueue[i];
+    offsetQueueBackup[i] = curproc->availableOffsetQueue[i];
     /**  clear pages queue **/
-    proc->inRAMQueue[i] = -1;
+    curproc->inRAMQueue[i] = -1;
+    curproc->availableOffsetQueue[i] = -1;
   }
 
   /**  backup proc page counters before clean **/
-  backupIndexes[0] = proc->numberOfPageFaults;
-  backupIndexes[1] = proc->fileOffset;
-  backupIndexes[2] = proc->pagesInSwpFile;
+  backupIndexes[0] = curproc->fileOffset;
+  backupIndexes[1] = curproc->numberOfPagedOut;
+  backupIndexes[2] = curproc->numberOfPageFaults;
+  backupIndexes[3] = curproc->totalNumberOfPagedOut;
+  backupIndexes[4] = curproc->numberOfAllocatedPages;
+
 
   /**  clean proc page counters before exec **/
-  proc->numberOfPageFaults = 0;
-  proc->fileOffset = 0;
-  proc->pagesInSwpFile = 0;
+  curproc->fileOffset = 0;
+  curproc->numberOfPagedOut = 0;
+  curproc->numberOfPageFaults = 0;
+  curproc->totalNumberOfPagedOut = 0;
+  curproc->numberOfAllocatedPages = 0;
 
 }
 
 void
-restoreFromBackup(struct page * backupDS, int * backupIndexes, int *queueBackup)
+restoreFromBackup(struct page * backupDS, int * backupIndexes, int *queueBackup, int * offsetQueueBackup)
 {
+  struct proc *curproc = myproc();
   int i;
   for (i = 0; i < MAX_TOTAL_PAGES; ++i) {
     /**  restore proc pagesDS after failed exec **/
-    proc->pagesDS[i].v_address = backupDS[i].v_address;
-    proc->pagesDS[i].file_offset = backupDS[i].file_offset;
-    proc->pagesDS[i].in_RAM = backupDS[i].in_RAM;
-    proc->pagesDS[i].isAllocated = backupDS[i].isAllocated;
+    curproc->pagesDS[i].v_address = backupDS[i].v_address;
+    curproc->pagesDS[i].file_offset = backupDS[i].file_offset;
+    curproc->pagesDS[i].in_RAM = backupDS[i].in_RAM;
+    curproc->pagesDS[i].isAllocated = backupDS[i].isAllocated;
   }
 
   for (i = 0 ; i < MAX_PSYC_PAGES; ++i) {
-    proc->inRAMQueue[i] = queueBackup[i];
+    curproc->inRAMQueue[i] = queueBackup[i];
+    curproc->availableOffsetQueue[i] = offsetQueueBackup[i];
+
   }
 
 
   /**  restore proc page counters after failed exec **/
-  proc->numberOfPageFaults = backupIndexes[0];
-  proc->fileOffset = backupIndexes[1];
-  proc->pagesInSwpFile = backupIndexes[2];
+  curproc->fileOffset = backupIndexes[0] ;
+  curproc->numberOfPagedOut = backupIndexes[1];
+  curproc->numberOfPageFaults = backupIndexes[2];
+  curproc->totalNumberOfPagedOut = backupIndexes[3];
+  curproc->numberOfAllocatedPages = backupIndexes[4];
 
 }
 
@@ -93,9 +106,10 @@ exec(char *path, char **argv)
 #if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
 
   struct page backupPagesDS[MAX_TOTAL_PAGES];
-  int backupIndexes[3];
+  int backupIndexes[5];
   int queueBackup[MAX_PSYC_PAGES];
-  initializePagesDataExec(backupPagesDS, backupIndexes, queueBackup);
+  int offsetQueueBackup[MAX_PSYC_PAGES];
+  initializePagesDataExec(backupPagesDS, backupIndexes, queueBackup, offsetQueueBackup);
 #endif
 
   // Check ELF header
@@ -172,10 +186,10 @@ exec(char *path, char **argv)
 
 #if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
   /**  change to the new swap file**/
-  if(proc-> pid > DEFAULT_PROCESSES)
+  if(curproc-> pid > DEFAULT_PROCESSES)
   {
-    removeSwapFile(proc);
-    createSwapFile(proc);
+    removeSwapFile(curproc);
+    createSwapFile(curproc);
   }
 #endif
 
@@ -188,7 +202,7 @@ exec(char *path, char **argv)
 
 #if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
   /**  failed exec restore the pagesDS and all indexes and counters stored in backup **/
-  restoreFromBackup(backupPagesDS , backupIndexes, queueBackup);
+  restoreFromBackup(backupPagesDS , backupIndexes, queueBackup, offsetQueueBackup);
 #endif
   if(pgdir)
     freevm(pgdir);

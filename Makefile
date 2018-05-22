@@ -75,6 +75,11 @@ ifndef SELECTION
 SELECTION := SCFIFO
 endif
 
+ifndef VERBOSE_PRINT
+VERBOSE_PRINT := FALSE
+endif
+
+
 CC = $(TOOLPREFIX)gcc
 AS = $(TOOLPREFIX)gas
 LD = $(TOOLPREFIX)ld
@@ -83,18 +88,14 @@ OBJDUMP = $(TOOLPREFIX)objdump
 CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32 -Werror -fno-omit-frame-pointer
 #CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -fvar-tracking -fvar-tracking-assignments -O0 -g -Wall -MD -gdwarf-2 -m32 -Werror -fno-omit-frame-pointer
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+CFLAGS += -D $(SELECTION)
 
-ifeq ($SELECTION), SCFIFO)
-CFLAGS += -D SCFIFO
-else ifeq ($SELSTION), NFUA)
-CLAFGS += -D NFUA
-else ifeq ($SELECTION), LAPA)
-CLAGS += -D LAPA
-else ifeq ($SELECTION), AQ)
-CLAGS += -D AQ
-else ifeq ($SELECTION), NONE)
-CLAGS += -D SELECTION_NONE
+ifeq ($(VERBOSE_PRINT),TRUE)
+CFLAGS += -D VERBOSE_PRINT_TRUE
+else ifeq ($(VERBOSE_PRINT),FALSE)
+CFLAGS += -D VERBOSE_PRINT_FALSE
 endif
+
 
 ASFLAGS = -m32 -gdwarf-2 -Wa,-divide
 # FreeBSD ld wants ``elf_i386_fbsd''
@@ -182,6 +183,10 @@ UPROGS=\
 	_grep\
 	_init\
 	_kill\
+	_memTest\
+	_myMemTest\
+	_forkTest1\
+	_loadTest\
 	_ln\
 	_ls\
 	_mkdir\
@@ -258,7 +263,7 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
 # check in that version.
 
 EXTRA=\
-	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
+	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c memTest.c forkTest1.c loadTest.c myMemTest.c\
 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
 	printf.c umalloc.c\
 	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\

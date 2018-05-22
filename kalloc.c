@@ -94,3 +94,19 @@ kalloc(void)
   return (char*)r;
 }
 
+int
+getCurrentCapacity()
+{
+  struct run *temp;
+  int counter = 0;
+  if(kmem.use_lock)
+    acquire(&kmem.lock);
+  temp = kmem.freelist;
+  while(temp){
+    temp = temp->next;
+    counter++;
+  }
+  if(kmem.use_lock)
+    release(&kmem.lock);
+  return counter;
+}

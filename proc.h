@@ -71,7 +71,6 @@ struct proc {
   uint numberOfPagedOut;                          // number of pages in the swap file
   int numberOfPageFaults;                        // the number of times a page fault has occurred
   int totalNumberOfPagedOut;                    // the number of times a page was moved to swap file
-
   int inRAMQueue[MAX_PSYC_PAGES];
   int availableOffsetQueue[MAX_PSYC_PAGES];
 

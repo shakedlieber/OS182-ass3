@@ -52,10 +52,10 @@ struct inode*   nameiparent(char*, char*);
 int             readi(struct inode*, char*, uint, uint);
 void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, char*, uint, uint);
-int		createSwapFile(struct proc* p);
-int		readFromSwapFile(struct proc * p, char* buffer, uint placeOnFile, uint size);
-int		writeToSwapFile(struct proc* p, char* buffer, uint placeOnFile, uint size);
-int		removeSwapFile(struct proc* p);
+int				createSwapFile(struct proc* p);
+int				readFromSwapFile(struct proc * p, char* buffer, uint placeOnFile, uint size);
+int				writeToSwapFile(struct proc* p, char* buffer, uint placeOnFile, uint size);
+int				removeSwapFile(struct proc* p);
 
 // ide.c
 void            ideinit(void);
@@ -72,6 +72,7 @@ char*           kalloc(void);
 void            kfree(char*);
 void            kinit1(void*, void*);
 void            kinit2(void*, void*);
+int             getCurrentCapacity(void);
 
 // kbd.c
 void            kbdintr(void);
@@ -131,6 +132,9 @@ int   			removeAQ(void);
 void			insert(int);
 void			agePages(void);
 void 			advanceQueue(void);
+int             getFreeFileOffset(void);	
+void            insertOffsetQueue(int);
+void            deallocatePage(uint);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -191,7 +195,7 @@ void            kvmalloc(void);
 pde_t*          setupkvm(void);
 char*           uva2ka(pde_t*, char*);
 int             allocuvm(pde_t*, uint, uint);
-int             deallocuvm(pde_t*, uint, uint);
+int             deallocuvm(pde_t*, uint, uint, int);
 void            freevm(pde_t*);
 void            inituvm(pde_t*, char*, uint);
 int             loaduvm(pde_t*, char*, struct inode*, uint, uint);

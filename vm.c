@@ -233,7 +233,7 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
   for(; a < newsz; a += PGSIZE){
 
 #if (defined(SCFIFO) || defined(NFUA) || defined(LAPA) || defined(AQ))
-    if((proc->pid > DEFAULT_PROCESSES) && ( a >= PGSIZE * MAX_PSYC_PAGES)) {
+    if((myproc()->pid > DEFAULT_PROCESSES) && ( a >= PGSIZE * MAX_PSYC_PAGES)) {
       swapToFile(pgdir);
     }
 #endif
@@ -241,32 +241,35 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     mem = kalloc();
     if(mem == 0){
       cprintf("allocuvm out of memory\n");
-      deallocuvm(pgdir, newsz, oldsz);
+      deallocuvm(pgdir, newsz, oldsz, 0);
       return 0;
     }
     memset(mem, 0, PGSIZE);
     if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
       cprintf("allocuvm out of memory (2)\n");
-      deallocuvm(pgdir, newsz, oldsz);
+      deallocuvm(pgdir, newsz, oldsz, 0);
       kfree(mem);
       return 0;
     }
 
 #if (defined(SCFIFO) || defined(NFUA) || defined(LAPA) || defined(AQ))
+    struct proc* curproc = myproc();
     pte_t *pte;
-    if(proc->pid > DEFAULT_PROCESSES)
+    if(curproc->pid > DEFAULT_PROCESSES)
     {
       int pageIndex = 0;
-      while((pageIndex<MAX_TOTAL_PAGES) && (proc->pagesDS[pageIndex].isAllocated == 1))
+      while((pageIndex<MAX_TOTAL_PAGES) && (curproc->pagesDS[pageIndex].isAllocated == 1))
         pageIndex++;
 
-      proc->pagesDS[pageIndex].isAllocated = 1;
-      proc->pagesDS[pageIndex].v_address = a;
+      curproc->pagesDS[pageIndex].isAllocated = 1;
+      curproc->pagesDS[pageIndex].v_address = a;
       /**  the new page is inside the RAM and NOT in the swap file**/
-      proc->pagesDS[pageIndex].in_RAM = 1;
-      proc->pagesDS[pageIndex].file_offset = -1;
+      curproc->pagesDS[pageIndex].in_RAM = 1;
+      curproc->pagesDS[pageIndex].file_offset = -1;
 
       insert(pageIndex);
+
+      curproc->numberOfAllocatedPages++;
 
       pte = walkpgdir(pgdir, (char *)a , 0);
       *pte=PTE_P_ON(*pte);
@@ -282,7 +285,7 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 // need to be less than oldsz.  oldsz can be larger than the actual
 // process size.  Returns the new process size.
 int
-deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
+deallocuvm(pde_t *pgdir, uint oldsz, uint newsz, int flag)
 {
   pte_t *pte;
   uint a, pa;
@@ -299,9 +302,25 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
       pa = PTE_ADDR(*pte);
       if(pa == 0)
         panic("kfree");
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
+      if(myproc()->pid > DEFAULT_PROCESSES && flag == 1)
+        deallocatePage(a);
+#endif
+
       char *v = P2V(pa);
       kfree(v);
       *pte = 0;
+    } else {
+#if (defined(SCFIFO) || defined(NFUA) || defined(AQ) || defined(LAPA))
+      if((myproc()->pid > DEFAULT_PROCESSES) && ((*pte & PTE_PG) != 0)){
+        pa = PTE_ADDR(*pte);
+        if(pa == 0)
+          panic("kfree");
+        if(myproc()->pid > DEFAULT_PROCESSES && flag == 1)
+        deallocatePage(a);
+        *pte = 0;
+      }
+#endif
     }
   }
   return newsz;
@@ -316,7 +335,7 @@ freevm(pde_t *pgdir)
 
   if(pgdir == 0)
     panic("freevm: no pgdir");
-  deallocuvm(pgdir, KERNBASE, 0);
+  deallocuvm(pgdir, KERNBASE, 0, 0);
   for(i = 0; i < NPDENTRIES; i++){
     if(pgdir[i] & PTE_P){
       char * v = P2V(PTE_ADDR(pgdir[i]));
@@ -415,35 +434,6 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   return 0;
 }
 
-
-char *
-swapToFile(pde_t *pgdir)
-{
-  pte_t *pte;
-  uint address = selectPage(); // TODO selectPage...
-  int bytesWrittenToFile = writeToSwapFile(proc, (char *) address, proc->fileOffset,PGSIZE);
-  int i = 0;
-  while(proc->pagesDS[i].v_address != address && i < MAX_TOTAL_PAGES)
-    i++;
-  /** putting the page in the file, overwriting previous file offset**/
-  proc->pagesDS[i].file_offset = proc->fileOffset;
-  /** page no longer in RAM moved to swap file**/
-  proc->pagesDS[i].in_RAM = 0;
-  proc->pagesDS[i].v_address = -1;
-  /** update the new file offset **/
-  proc->fileOffset = proc->fileOffset + bytesWrittenToFile;
-  proc->pagesInSwpFile++;
-  pte = walkpgdir(pgdir, (char *)address, 0);
-  *pte = PTE_P_OFF(*pte);
-  *pte = PTE_PG_ON(*pte);
-  uint pageAddress = PTE_ADDR(*pte);
-  char* v_address = p2v(pageAddress);
-  kfree(v_address);
-  lcr3(v2p(proc->pgdir));
-  return v_address;
-
-}
-
 uint
 selectPage()
 {
@@ -462,7 +452,38 @@ selectPage()
   index = removeAQ();
 #endif  
 
-  return proc->pagesDS[index].v_address;
+  return myproc()->pagesDS[index].v_address;
+}
+
+char *
+swapToFile(pde_t *pgdir)
+{
+  struct proc* curproc = myproc();
+  pte_t *pte;
+  uint address = selectPage();
+  int offset = getFreeFileOffset();
+  writeToSwapFile(curproc, (char *) address, offset, PGSIZE);
+  int i = 0;
+  while(curproc->pagesDS[i].v_address != address && i < MAX_TOTAL_PAGES)
+    i++;
+  /** putting the page in the file, overwriting previous file offset**/
+  curproc->pagesDS[i].file_offset = offset;
+  /** page no longer in RAM moved to swap file**/
+  curproc->pagesDS[i].in_RAM = 0;
+  // curproc->pagesDS[i].v_address = -1;
+  
+  curproc->totalNumberOfPagedOut++;
+  curproc->numberOfPagedOut++;
+
+  pte = walkpgdir(pgdir, (char *)address, 0);
+  *pte = PTE_P_OFF(*pte);
+  *pte = PTE_PG_ON(*pte);
+  uint pageAddress = PTE_ADDR(*pte);
+  char* v_address = P2V(pageAddress);
+  kfree(v_address);
+  lcr3(V2P(curproc->pgdir));
+  return v_address;
+
 }
 
 /** create PTE - mappages **/
