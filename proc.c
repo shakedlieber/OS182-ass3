@@ -672,7 +672,6 @@ int removeSCFIFO(){
     new_index++;
   }
 
-
   i = 0;
   while (new_index < MAX_PSYC_PAGES) {
     curproc->inRAMQueue[new_index] = temp[i];
@@ -742,11 +741,10 @@ int removeAQ(){
 
 void insert(int index){
   struct proc *curproc = myproc();
-  int i = 0;
-  while (curproc->inRAMQueue[i] != -1) {
+  int i;
+  while (i = 0; curproc->inRAMQueue[i] != -1; i++) {
     if (i == MAX_PSYC_PAGES)
       panic("error in inerstion!");
-    i++;
   }
   // cprintf("\n%d <- %d\n", i, index);
   curproc->inRAMQueue[i] = index;
@@ -787,11 +785,10 @@ void advanceQueue(void){
 
 void fixOffsetQueue() {
   struct proc *curproc = myproc();
-  int index = 0;
-  while (index < MAX_PSYC_PAGES - 1) {
+  int index;
+  for (index = 0; index < MAX_PSYC_PAGES - 1; index++)
     curproc->availableOffsetQueue[index] = curproc->availableOffsetQueue[index + 1];
-    index++;
-  }
+
   curproc->availableOffsetQueue[MAX_PSYC_PAGES -1 ] = -1;
 }
 
@@ -809,11 +806,9 @@ int removeOffsetQueue(void) {
 void insertOffsetQueue(int index) {
   struct proc* curproc = myproc();
 
-  int i = 0;
-  while (curproc->availableOffsetQueue[i] != -1) {
+  for (i = 0; curproc->availableOffsetQueue[i] != -1; i++) {
     if (i == MAX_PSYC_PAGES)
       panic("overflow  in offset insert !");
-    i++;
   }
   curproc->availableOffsetQueue[i] = index;
 
@@ -833,9 +828,9 @@ int getFreeFileOffset(void) {
 void deallocatePage(uint va) {
   struct proc* curproc = myproc();
 
-  int i = 0;
+  int i;
   int idx;
-  while (i < MAX_TOTAL_PAGES) {
+  for (i = 0; i < MAX_TOTAL_PAGES; i++) {
    // cprintf("WE ARE COMPARING : %p with %p \n", (char*) proc->pagesDS[i].v_address, va);
     if ((curproc->pagesDS[i].isAllocated != 0) && (curproc->pagesDS[i].v_address ==  va)) {
 
@@ -856,19 +851,16 @@ void deallocatePage(uint va) {
       break;
 
     }
-    i++;
   }
 
   if (i == MAX_TOTAL_PAGES)
     panic("trying to deallocate a non existing page ");
 
   idx = i;
-  i = 0;
-  while (i < MAX_PSYC_PAGES) {
+  for (i = 0; i < MAX_PSYC_PAGES; i++) {
     if (curproc->inRAMQueue[i] == idx) {
       fixQueue(i);
       break;
     }
-    i++;
   }
 }

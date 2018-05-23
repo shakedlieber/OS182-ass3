@@ -160,12 +160,6 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER){
 
-// #if (defined(NFUA) || defined(LAPA))
-//     agePages();
-// #elif (defined(AQ))
-//     advanceQueue();
-// #endif
-
     yield();
   }
 

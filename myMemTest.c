@@ -1,178 +1,92 @@
+
 #include "param.h"
 #include "types.h"
+#include "stat.h"
 #include "user.h"
+#include "fs.h"
+#include "fcntl.h"
+#include "syscall.h"
+#include "memlayout.h"
+#include "mmu.h"
 
-#define PGSIZE 4096
-#define BUFFERS_SIZE 1024
-#define BUFFERS_NUM (PGSIZE * 20) / BUFFERS_SIZE
-#define POLICY_BUFFERS_NUM 20
+#define N_PAGES 24
 
-void
-malloc_test(int num) 
-{
-  int* buffers[BUFFERS_NUM];
+char* data[N_PAGES];
 
-  printf(1, "malloc_test_%d...\n", num);
-  printf(1, "      initiating...\n");
-  for (int i = 0; i < BUFFERS_NUM; i++) {
-    printf(1, ".");
-    buffers[i] = malloc(BUFFERS_SIZE);
-    buffers[i][0] = i;
-  }
+volatile int main(int argc, char *argv[]) {
 
-  printf(1, " \n      testing...\n");
-  for (int i = 0; i < BUFFERS_NUM; i++) {
-    printf(1, ".");
-    if (buffers[i][0] != i) {
-      printf(1, "malloc_test failed...");
-      exit();
-    }
-  }  
+	int i = 0;
+	int n = N_PAGES;
 
-  printf(1, " \n      freeing...\n");
-  for (int i = 0; i < BUFFERS_NUM; i++) {
-    printf(1, ".");
-    free(buffers[i]);
-  } 
+	for (i = 0; i < n ;)
+	{
+		data[i] = sbrk(PGSIZE);
+		data[i][0] = 00 + i;
+		data[i][1] = 10 + i;
+		data[i][2] = 20 + i;
+		data[i][3] = 30 + i;
+		data[i][4] = 40 + i;
+		data[i][5] = 50 + i;
+		data[i][6] = 60 + i;
+		data[i][7] = 70 + i;
+		printf(1, "allocated new page #%d at address: %x\n", i, data[i]);
+		i++;
+	}
 
-  printf(1, "\n  malloc_test_%d ok...\n", num);  
+	printf(1,"\nIterate through pages seq:\n");
+
+	int j;
+	for(j = 1; j < n; j++)
+	{
+		printf(1,"j:  %d\n",j);
+
+		for(i = 0; i < j; i++) {
+			data[i][10] = 2; // access to the i-th page
+			printf(1,"%d, ",i);
+		}
+		printf(1,"\n");
+	}
+
+	int k;
+	printf(1, "\nGo through same 8 pages and different 8 others\n");
+	for(j = 0; j < 8; j++){
+		for(i = 20; i < 24; i++) {
+			data[i][10] = 1;
+			printf(1,"%d, ",i);
+		}
+		printf(1,"\n");
+		switch (j%4) {
+		case 0:
+			for(k = 0; k < 4; k++) {
+				data[k][10] = 1;
+				printf(1,"%d, ",k);
+			}
+			break;
+		case 1:
+			for(k = 4; k < 8; k++) {
+				data[k][10] = 1;
+				printf(1,"%d, ",k);
+			}
+			break;
+		case 2:
+			for(k = 8; k < 12; k++) {
+				data[k][10] = 1;
+				printf(1,"%d, ",k);
+			}
+			break;
+		case 3:
+			for(k = 12; k < 16; k++) {
+				data[k][10] = 1;
+				printf(1,"%d, ",k);
+			}
+			break;
+		}
+		
+		// data[j][10] = 0;
+		// printf(1,"%d, ",j);
+		printf(1,"\n");
+	}
+	exit();
+	return 0;
 }
-
-void
-fork_test(int num)
-{
-  int* buffers[BUFFERS_NUM];
-
-  printf(1, "fork_test_%d...\n", num);
-  printf(1, "      initiating...\n");
-  for (int i = 0; i < BUFFERS_NUM; i++) {
-    printf(1, ".");
-    buffers[i] = malloc(BUFFERS_SIZE);
-    buffers[i][0] = i;
-  }
-
-  printf(1, " \n      testing father...\n");
-  for (int i = 0; i < BUFFERS_NUM; i++) {
-    printf(1, ".");
-      if (buffers[i][0] != i) {
-        printf(1, "fork_test failed (%d != %d)...", buffers[i][0], i);
-        exit();
-      }
-  }
-
-  printf(1, " \n      testing father 2...\n");
-  for (int i = 0; i < BUFFERS_NUM; i++) {
-    printf(1, ".");
-      if (buffers[i][0] != i) {
-        printf(1, "fork_test failed (%d != %d)...", buffers[i][0], i);
-        exit();
-      }
-  }  
-
-  if (fork() == 0) {
-    printf(1, " \n      testing...\n");
-    for (int i = 0; i < BUFFERS_NUM; i++) {
-      printf(1, ".");
-        if (buffers[i][0] != i) {
-          printf(1, "fork_test failed (%d != %d)...\n", buffers[i][0], i);   
-          exit();     
-        }
-    }
-
-    printf(1, "\n  fork_test_%d ok...\n", num);
-    exit();
-  } 
-
-  for (int i = 0; i < BUFFERS_NUM; i++) {
-    free(buffers[i]);
-  }   
-
-  wait();
-}
-
-void
-exec_test()
-{
-  printf(1, "exec_test...\n");
-
-  if(fork() == 0) {
-    char* args[] = {"myMemTest", "1", 0};
-    exec(args[0], args);
-  }
-
-  wait();
-
-  printf(1, "exec_test ok...\n");
-}
-
-void
-policy_test() 
-{
-  int* buffers[POLICY_BUFFERS_NUM];
-  int order[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8,
-                 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-                 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
-  
-  printf(1, "policy_test...\n");
-  printf(1, "      initiating...\n");
-  for (int i = 0; i < POLICY_BUFFERS_NUM; i++) {
-    printf(1, ".");
-    buffers[i] = malloc(BUFFERS_SIZE * 4);
-    for (int j = 0; j < BUFFERS_SIZE; j++) {
-      buffers[i][j] = i * j;
-    }
-    
-  }
-
-  int up = uptime();
-  printf(1, " \n      testing...\n");
-  for (int k = 0; k < 20; k++) {
-    for (int i = 0; i < sizeof(order) / 4; i++) {
-      printf(1, ".");
-      int index = order[i];
-      for (int j = 0; j < 50; j++) {
-        if (buffers[index][j] != index * j) {
-          printf(1, "policy_test failed...");
-          exit();
-        }
-      }
-    } 
-  }
-  up = uptime() - up;
-  
-  printf(1, " \n      freeing...\n");
-  for (int i = 0; i < POLICY_BUFFERS_NUM; i++) {
-    printf(1, ".");
-    free(buffers[i]);
-  } 
-
-
-  
-  printf(1, "\n  policy_test ok(%d ticks)...\n", up);  
-}
-
-int
-main(int argc, char *argv[])
-{
-    if (argc == 2) {
-      printf(1, "(exec)(exec)(exec)...\n");
-      fork_test(1);
-      malloc_test(1);
-    } else if (argc == 3) {
-      printf(1, "(exec)(exec)(exec)...\n");
-      malloc_test(1);
-      exec_test();
-    } else if (argc == 4) {
-      printf(1, "myMemTest starting...\n");
-      fork_test(1);
-      malloc_test(1);
-      malloc_test(2);
-      malloc_test(3);
-      fork_test(2);
-      malloc_test(4);
-    } else {
-      policy_test() ;
-    }
-
-    exit();
-}
+	
