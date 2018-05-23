@@ -742,7 +742,7 @@ int removeAQ(){
 void insert(int index){
   struct proc *curproc = myproc();
   int i;
-  while (i = 0; curproc->inRAMQueue[i] != -1; i++) {
+  for (i = 0; curproc->inRAMQueue[i] != -1; i++) {
     if (i == MAX_PSYC_PAGES)
       panic("error in inerstion!");
   }
@@ -805,7 +805,7 @@ int removeOffsetQueue(void) {
 
 void insertOffsetQueue(int index) {
   struct proc* curproc = myproc();
-
+  int i;
   for (i = 0; curproc->availableOffsetQueue[i] != -1; i++) {
     if (i == MAX_PSYC_PAGES)
       panic("overflow  in offset insert !");
